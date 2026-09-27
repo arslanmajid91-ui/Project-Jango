@@ -1,0 +1,12 @@
+{
+  "name": "urdu-translator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "English to Urdu translator powered by the Qalb Urdu LLM via Ollama",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

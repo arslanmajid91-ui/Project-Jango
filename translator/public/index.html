@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>English → Urdu Translator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f6f5f1; --card: #ffffff; --text: #1d1d1b; --muted: #6b6a65;
+      --border: #e2e0d8; --accent: #01411c; --accent-text: #ffffff; --error: #b3261e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #151614; --card: #1f201d; --text: #ecebe6; --muted: #a09f98;
+              --border: #34352f; --accent: #3f9a5f; --accent-text: #0d1a11; --error: #f2877f; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 720px) { .panes { grid-template-columns: 1fr; } }
+    .pane { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+            display: flex; flex-direction: column; min-height: 280px; }
+    .pane header { display: flex; justify-content: space-between; align-items: center;
+                   padding: 10px 14px; border-bottom: 1px solid var(--border);
+                   font-weight: 600; font-size: .9rem; color: var(--muted); }
+    textarea { flex: 1; border: 0; resize: none; padding: 14px; background: transparent;
+               color: var(--text); font: inherit; font-size: 1.1rem; outline: none; }
+    #output { flex: 1; padding: 14px 18px; direction: rtl; text-align: right; white-space: pre-wrap;
+              font-family: "Noto Nastaliq Urdu", serif; font-size: 1.35rem; line-height: 2.3; }
+    #output:empty::before { content: "ترجمہ یہاں آئے گا"; color: var(--muted); }
+    .pane footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border);
+                   align-items: center; }
+    .count { margin-inline-start: auto; color: var(--muted); font-size: .85rem; }
+    button { font: inherit; font-size: .9rem; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+             border: 1px solid var(--border); background: transparent; color: var(--text); }
+    button:disabled { opacity: .5; cursor: default; }
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+                     font-weight: 600; padding: 10px 22px; }
+    button.recording { border-color: var(--error); color: var(--error); }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    #status { color: var(--muted); font-size: .9rem; }
+    #status.error { color: var(--error); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>English → Urdu</h1>
+  <p class="sub">Powered by <strong>Qalb</strong>, the open-source Urdu language model. <span id="model"></span></p>
+
+  <div class="panes">
+    <section class="pane">
+      <header><span>English</span></header>
+      <textarea id="input" placeholder="Type or speak English…" maxlength="2000" autofocus></textarea>
+      <footer>
+        <button id="mic" type="button" title="Speak English">🎤 Speak</button>
+        <button id="clear" type="button">Clear</button>
+        <span class="count" id="count">0 / 2000</span>
+      </footer>
+    </section>
+
+    <section class="pane">
+      <header><span>اردو · Urdu</span></header>
+      <div id="output" lang="ur" aria-live="polite"></div>
+      <footer>
+        <button id="speak" type="button" disabled>🔊 Listen</button>
+        <button id="copy" type="button" disabled>Copy</button>
+      </footer>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button id="translate" class="primary" type="button">Translate</button>
+    <span id="status"></span>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const input = $("input"), output = $("output"), status = $("status");
+  const translateBtn = $("translate"), micBtn = $("mic"), speakBtn = $("speak"), copyBtn = $("copy");
+  let maxChars = 2000;
+
+  fetch("/api/config").then((r) => r.json()).then((c) => {
+    maxChars = c.maxChars;
+    $("model").textContent = `Model: ${c.model}`;
+    updateCount();
+  }).catch(() => {});
+
+  function setStatus(msg, isError = false) {
+    status.textContent = msg;
+    status.classList.toggle("error", isError);
+  }
+  function updateCount() { $("count").textContent = `${input.value.length} / ${maxChars}`; }
+  function setOutputActions() { speakBtn.disabled = copyBtn.disabled = !output.textContent.trim(); }
+
+  async function translate() {
+    const text = input.value.trim();
+    if (!text) return setStatus("Enter some English text first.", true);
+    translateBtn.disabled = true;
+    output.textContent = "";
+    setOutputActions();
+    setStatus("Translating…");
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed (${res.status})`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        output.textContent += decoder.decode(value, { stream: true });
+      }
+      output.textContent = output.textContent.trim();
+      setStatus("");
+    } catch (err) {
+      setStatus(err.message, true);
+    } finally {
+      translateBtn.disabled = false;
+      setOutputActions();
+    }
+  }
+
+  translateBtn.addEventListener("click", translate);
+  input.addEventListener("input", updateCount);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) translate();
+  });
+  $("clear").addEventListener("click", () => {
+    input.value = ""; output.textContent = ""; updateCount(); setOutputActions(); setStatus(""); input.focus();
+  });
+  copyBtn.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(output.textContent);
+    setStatus("Copied.");
+  });
+
+  // Voice input (English speech → text) via the browser's Web Speech API.
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    micBtn.disabled = true;
+    micBtn.title = "Voice input isn't supported in this browser (try Chrome or Edge)";
+  } else {
+    const rec = new Recognition();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    let listening = false, base = "";
+    rec.onresult = (e) => {
+      let transcript = "";
+      for (const r of e.results) transcript += r[0].transcript;
+      input.value = (base + " " + transcript).trim();
+      updateCount();
+    };
+    rec.onend = () => {
+      listening = false;
+      micBtn.classList.remove("recording");
+      micBtn.textContent = "🎤 Speak";
+      if (input.value.trim()) translate();
+    };
+    rec.onerror = (e) => setStatus(`Microphone: ${e.error}`, true);
+    micBtn.addEventListener("click", () => {
+      if (listening) return rec.stop();
+      base = input.value;
+      rec.start();
+      listening = true;
+      micBtn.classList.add("recording");
+      micBtn.textContent = "■ Stop";
+      setStatus("Listening…");
+    });
+  }
+
+  // Voice output (Urdu text → speech) using an Urdu system voice when one is installed.
+  function urduVoice() {
+    return speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith("ur"));
+  }
+  speakBtn.addEventListener("click", () => {
+    const voice = urduVoice();
+    if (!voice) {
+      return setStatus("No Urdu voice on this device. Edge (Windows) and Android usually include one.", true);
+    }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(output.textContent);
+    u.voice = voice;
+    u.lang = voice.lang;
+    speechSynthesis.speak(u);
+  });
+</script>
+</body>
+</html>
